@@ -9,7 +9,8 @@ from PyQt5.QtWidgets import (
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from scipy.optimize import minimize
-import sympy as sp
+
+
 
 def generate_best_grid_points(bounds, cost_expr, constraint_exprs, S, step=0.1):
     # Generate grid points for each variable
@@ -50,29 +51,7 @@ def generate_best_grid_points(bounds, cost_expr, constraint_exprs, S, step=0.1):
     
     # Sort by cost and take top S
     valid_points.sort(key=lambda t: t[0])
-    return [np.round(p,5) for _, p in valid_points[:S]]
-
-
-
-def check_convexity(cost_expr, bound, constraints):
-    # Define function and variable    
-    x = sp.symbols('x', real=True)
-    cost_expr = cost_expr.replace("x[0]", "x")  # Replace x[0] with x for sympy compatibility
-    cost_expr = sp.sympify(cost_expr)
-
-    f = cost_expr
-
-    # Constraints
-    (a, b) = bound[0]
-            
-
-    # Second derivative
-    f2 = sp.diff(f, x, 2)
-
-    # Check convexity in constraint range
-    is_convex = all(f2.subs(x, val) >= 0 for val in np.linspace(a, b, 100))
-     
-    return is_convex
+    return [p for _, p in valid_points[:S]]
 
 
 def translate_vars(expr):
@@ -142,30 +121,16 @@ class OptimizationApp(QWidget):
 
         self.bounds_input = QTextEdit()
         # self.bounds_input.setPlaceholderText(
-        #     "Examples:\n"
-        #     "x1: -5, 5\n"
-        #     "x2: 0, 10\n"
-        #     "x3: 1        # shorthand -> [-1,1]\n"
-        #     "all: -5, 5\n"
-        #     "x1-x3: -2, 2\n" 
-        #     "You may separate multiple entries with ';' on the same line."
-        # )
         self.bounds_input.setText(
             "x1: -5, 5\n"
             "x2: 0, 10\n"
-            "x3: -10, 10 "      
+            "x3: -10, 10 "  
         )
 
-
         self.cost_input = QLineEdit()
-        # self.cost_input.setPlaceholderText("e.g. (x1-1)**2 + (x2+2)**2 + 0.5*(x3)**2")
-        self.cost_input.setText("(x1-x2)**3 + (1/x2+2)**2 + 0.5*(x3)**2")
+        self.cost_input.setText("(x1-x2)**2 + (1/x2+2)**2 + 0.5*(x3)**2")
 
         self.constraints_input = QTextEdit()
-        # self.constraints_input.setPlaceholderText(
-        #     "Constraints, comma-separated or newline separated. Use x1, x2, ...\n"
-        #     "Example:\n x1 >= 0, x2 >= -2, x1 + x2 <= 5"
-        # )
         self.constraints_input.setText(
             "x1 >= 0\n"
             "x2 >= 2\n"
@@ -274,124 +239,48 @@ class OptimizationApp(QWidget):
                 parts = [p.strip() for p in re.split(r'[,;\n]+', raw_cons) if p.strip()]
                 constraint_list = parts
 
+            # initial_points = []
+            # for _ in range(num_init):
+            #     xi = np.array([np.random.uniform(low, high) for (low, high) in bounds], dtype=float)
+            #     initial_points.append(xi)
             initial_points = generate_best_grid_points(bounds, cost_expr, constraint_list, num_init, step=0.01)
 
-            # solve the optimization problem for the i-th variable
+
             self.result_output.clear()
-            
+            self.result_output.append("Running parallel optimizations...\n")
+            results = []
 
-            cnt,i = 0,0
-            tolerance = 1e-6
-            diff = 1.0
-            cost_results = []
-            # start Coordinate Descent with multiple initial points
-            while diff > tolerance and cnt < 100:
-                
-                self.result_output.append(f"Running Multi-Point CD iteraion {cnt}...\n")
-                
-                
-                for i in range(n):
-                    
-                    # if diff <= tolerance:
-                    #     break
-                    # set varialbes after i-th variable to init values
-                    # print('initial points:', initial_points)
-                    x0_c = [x[i] for x in initial_points]
-                    bounds_c = [bounds[i]]
-
-                    cost_expr_c_tmp = cost_expr
-                    cost_expr_c = []
-                    constraint_list_c_tmp = constraint_list.copy()
-                    constraint_list_c = []
-                    for init_pt_x in initial_points:
-                        for j in range(n):
-                            if j != i:
-                                cost_expr_c_tmp = cost_expr_c_tmp.replace(f"x[{j}]", f"{init_pt_x[j]}")
-                                constraint_list_c_tmp = [c.replace(f"x{j+1}", f"{init_pt_x[j]}") for c in constraint_list_c_tmp if f"x{i+1}" in c]
-                                
-                                
-                                # replace xi to x1, now we only have one variable
-                        cost_expr_c_tmp_new = cost_expr_c_tmp.replace(f"x[{i}]", f"x[0]")
-                        
-                        cost_expr_c.append(cost_expr_c_tmp_new)
-                        constraint_list_c_tmp_new = [x.replace(f"x{i+1}", f"x[0]") for x in constraint_list_c_tmp if f"x{i+1}" in x]
-                        constraint_list_c.append(constraint_list_c_tmp_new)
-
-
-                    print(f"Initial points for variable {i+1}: {x0_c}")
-                    print(f"Bounds for variable {i+1}: {bounds_c}")
-                    print(f"Constraints for variable {i+1}: {constraint_list_c}")
-                    print(f"Cost expr for variable {i+1}: {cost_expr_c}")
-                    # check convexity
-                    if cnt == 0:
-                        is_convex = check_convexity(cost_expr_c[0],bounds_c, constraint_list_c[0])
-                        if not is_convex:
-                            self.result_output.append("Cost function is not convex in the given constraints:")
-                            self.result_output.append(f"When processing variable x{i+1}")
-                            return
-
-                    results = []
-                    with ProcessPoolExecutor() as executor:
-                        futures = [
-                            executor.submit(solve_from_initial_point, x0, cost_expr_i, constraint_c, bounds_c)
-                            for x0,cost_expr_i,constraint_c in zip(x0_c,cost_expr_c,constraint_list_c)
-                        ]
-                        for idx, future in enumerate(as_completed(futures), start=1):
-                            try:
-                                res = future.result()
-                                if res.success:
-                                    
-                                    results.append(res)
-
-                                    # self.result_output.append(
-                                    #     f"[Init {idx}] Success: cost={res.fun:.6g}, x={self._format_solution(res.x)}"
-                                    # )
-                                else:
-                                    self.result_output.append(f"[Init {idx}] Failed: {res.message}")
-                            except Exception as e:
-                                self.result_output.append(f"[Init {idx}] Error: {str(e)}")
-
-                    if not results:
-                        self.result_output.append("\nNo successful runs found.")
-                        return
-
-                    
-
-                    # build new init points for next iteration
-                    for k, res in enumerate(results):
+            with ProcessPoolExecutor() as executor:
+                futures = [
+                    executor.submit(solve_from_initial_point, x0, cost_expr, constraint_list, bounds)
+                    for x0 in initial_points
+                ]
+                for idx, future in enumerate(as_completed(futures), start=1):
+                    try:
+                        res = future.result()
                         if res.success:
-                            new_x = res.x.copy()
-                            initial_points[k][i] = new_x  # update i-th variable
+                            results.append(res)
+                            self.result_output.append(
+                                f"[Init {idx}] Success: cost={res.fun:.6g}, x={self._format_solution(res.x)}"
+                            )
+                        else:
+                            self.result_output.append(f"[Init {idx}] Failed: {res.message}")
+                    except Exception as e:
+                        self.result_output.append(f"[Init {idx}] Error: {str(e)}")
 
-                    # calculate the difference between the best cost and the previous cost
-                    last_cost = [res.fun for res in results]
-                    if cnt == 0 and i == 0:
-                        cost_results.append(last_cost)
-                    else:
-                        previous_cost_idx = results.index(min(results, key=lambda r: r.fun))
-                        diff = abs(cost_results[-1][previous_cost_idx] - results[previous_cost_idx].fun)
-                        cost_results.append(last_cost)
-                        
-                cnt += 1
-
-
+            if not results:
+                self.result_output.append("\nNo successful runs found.")
+                return
 
             best = min(results, key=lambda r: r.fun)
-            selected_idx = results.index(best)
-            best_result = initial_points[selected_idx]
-
             self.result_output.append("\n=== Best Solution ===")
-            for i, val in enumerate(best_result):
+            for i, val in enumerate(best.x):
                 self.result_output.append(f"x{i+1} = {float(val):.8g}")
             self.result_output.append(f"Minimum cost: {best.fun:.12g}")
-            self.result_output.append(f"Number of cost evaluations (best run): {(i+1)*(cnt+1)+i+1}")
+            self.result_output.append(f"Number of cost evaluations (best run): {len(best.cost_trace)}")
 
-            best_cost_trace = [x[selected_idx] for x in cost_results]
-            self._plot_cost_trace(best_cost_trace)
+            self._plot_cost_trace(best.cost_trace)
 
-            print(f"Best solution: {best.x}, cost: {best.fun:.6g}, evaluations: {len(best.cost_trace)}")
-
-        
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
 
