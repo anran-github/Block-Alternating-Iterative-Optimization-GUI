@@ -10,6 +10,7 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from scipy.optimize import minimize
 import sympy as sp
+from sympy.calculus.util import minimum
 
 def generate_best_grid_points(bounds, cost_expr, constraint_exprs, S, step=0.1):
     # Generate grid points for each variable
@@ -55,24 +56,44 @@ def generate_best_grid_points(bounds, cost_expr, constraint_exprs, S, step=0.1):
 
 
 def check_convexity(cost_expr, bound, constraints):
+
+
     # Define function and variable    
-    x = sp.symbols('x', real=True)
-    cost_expr = cost_expr.replace("x[0]", "x")  # Replace x[0] with x for sympy compatibility
-    cost_expr = sp.sympify(cost_expr)
+    xi = sp.symbols('xi')
+    cost_expr = cost_expr.replace("x[0]", "xi")  # Replace x[0] with x for sympy compatibility
+    cost_expr = sp.sympify(cost_expr,evaluate=False)
 
-    f = cost_expr
+    f2 = cost_expr.diff(xi, 2)  # Second derivative
 
-    # Constraints
-    (a, b) = bound[0]
-            
 
-    # Second derivative
-    f2 = sp.diff(f, x, 2)
+    # Start with bound interval
+    feasible_set = sp.Interval(bound[0][0], bound[0][1])
 
-    # Check convexity in constraint range
-    is_convex = all(f2.subs(x, val) >= 0 for val in np.linspace(a, b, 100))
-     
-    return is_convex
+    # Apply constraints
+    for c in constraints:
+        if isinstance(c, str):
+            c = c.replace("x[0]", "xi")
+            c = sp.sympify(c)
+        if c.is_Relational:
+            sol_set = sp.solve_univariate_inequality(c, xi, relational=False)
+            feasible_set = feasible_set.intersect(sol_set)
+
+    # Check symbolically
+    try:
+        symbolic_check = sp.reduce_inequalities(
+            [f2 >= 0, xi >= feasible_set.inf, xi <= feasible_set.sup]
+        )
+        if symbolic_check == True:
+            return True
+    except Exception:
+        pass
+
+    # Fallback numerical sampling
+    lower, upper = float(feasible_set.inf), float(feasible_set.sup)
+    sample_points = np.linspace(lower, upper, 500)
+    is_convex_num = all(f2.subs(xi, val) >= 0 for val in sample_points)
+
+    return is_convex_num
 
 
 def translate_vars(expr):
