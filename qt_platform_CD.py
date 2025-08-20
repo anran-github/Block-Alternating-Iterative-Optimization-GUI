@@ -11,6 +11,9 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from scipy.optimize import minimize
 import sympy as sp
 from sympy.calculus.util import minimum
+from time import time
+from PyQt5.QtWidgets import QComboBox
+
 
 def generate_best_grid_points(bounds, cost_expr, constraint_exprs, S, step=0.1):
     # Generate grid points for each variable
@@ -121,7 +124,7 @@ def parse_constraint_expression(expr):
         raise ValueError(f"Invalid constraint format (need <=, >=, <, or >): {expr}")
 
 
-def solve_from_initial_point(x0, cost_expr, constraint_exprs, bounds):
+def solve_from_initial_point(x0, cost_expr, constraint_exprs, bounds, mode="SLSQP"):
     cost_values = []
 
     def cost_fn(x):
@@ -141,7 +144,7 @@ def solve_from_initial_point(x0, cost_expr, constraint_exprs, bounds):
 
         cons.append({"type": "ineq", "fun": make_fun(transformed)})
 
-    result = minimize(cost_fn, x0, method="SLSQP", bounds=bounds, constraints=cons)
+    result = minimize(cost_fn, x0, method=mode, bounds=bounds, constraints=cons)
     result.cost_trace = cost_values
     return result
 
@@ -149,7 +152,7 @@ def solve_from_initial_point(x0, cost_expr, constraint_exprs, bounds):
 class OptimizationApp(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Multi-inital Coordinate Descent Optimization (x1, x2, ...)")
+        self.setWindowTitle("Multi-inital Coordinate Descent Optimization")
         self.setGeometry(100, 100, 900, 720)
 
         top_row = QHBoxLayout()
@@ -172,15 +175,15 @@ class OptimizationApp(QWidget):
         #     "You may separate multiple entries with ';' on the same line."
         # )
         self.bounds_input.setText(
-            "x1: -5, 5\n"
+            "x1: -3, 3\n"
             "x2: 0, 10\n"
-            "x3: -10, 10 "      
+            "x3: -1, 1 "      
         )
 
 
         self.cost_input = QLineEdit()
         # self.cost_input.setPlaceholderText("e.g. (x1-1)**2 + (x2+2)**2 + 0.5*(x3)**2")
-        self.cost_input.setText("(x1-x2)**3 + (1/x2+2)**2 + 0.5*(x3)**2")
+        self.cost_input.setText("(x1-x2)**2 + (1/x2+2)**2 + 0.5*(x3)**2")
 
         self.constraints_input = QTextEdit()
         # self.constraints_input.setPlaceholderText(
@@ -194,8 +197,18 @@ class OptimizationApp(QWidget):
             "x3*x1 >= 2\n"
         )
 
+        solve_mode = QHBoxLayout()
+        solve_mode.addWidget(QLabel("Select Optimization Algorithm:"))
+        self.algo_selector = QComboBox()
+        self.algo_selector.addItems(["Multi-Start CD", "SLSQP", "COBYLA","trust-constr", "GA"])
+        solve_mode.addWidget(self.algo_selector)
+
         self.solve_button = QPushButton("Solve (parallel)")
         self.solve_button.clicked.connect(self.solve_optimization)
+
+        solvers_solve = QHBoxLayout()
+        solvers_solve.addLayout(solve_mode)
+        solvers_solve.addWidget(self.solve_button)
 
         self.result_output = QTextEdit()
         self.result_output.setReadOnly(True)
@@ -210,10 +223,13 @@ class OptimizationApp(QWidget):
         layout.addWidget(self.cost_input)
         layout.addWidget(QLabel("Constraints (use x1, x2, ...). Separate by comma or new line:"))
         layout.addWidget(self.constraints_input)
-        layout.addWidget(self.solve_button)
+        
+        # layout.addWidget(self.algo_selector)
+        layout.addLayout(solvers_solve)
+        # layout.addWidget(self.solve_button)
         layout.addWidget(QLabel("Optimization Results:"))
         layout.addWidget(self.result_output)
-        layout.addWidget(QLabel("Best cost trace (function evaluations):"))
+        layout.addWidget(QLabel("Best Cost Trace:"))
         layout.addWidget(self.plot_canvas)
 
         self.setLayout(layout)
@@ -273,6 +289,248 @@ class OptimizationApp(QWidget):
             return int(var[1:]) - 1
         else:
             return int(var)  # fallback
+        
+
+
+    def _solve_with_Multi_SCD(self, n, num_init, bounds, cost_expr, constraint_list):
+
+        self.result_output.append("Running Multi-Starting Point CD Optimization...\n")
+
+        t_start = time()
+        initial_points = generate_best_grid_points(bounds, cost_expr, constraint_list, num_init, step=0.01)
+
+        # solve the optimization problem for the i-th variable
+        self.result_output.clear()
+        
+
+        cnt,i = 0,0
+        tolerance = 1e-6
+        diff = 1.0
+        cost_results = []
+        # start Coordinate Descent with multiple initial points
+        while diff > tolerance and cnt < 100:
+            
+            self.result_output.append(f"Running Multi-Point CD iteraion {cnt}...\n")
+            
+            order = list(range(n))
+            # np.random.shuffle(order)  # random order of variables
+            for i in order:
+                
+                # if diff <= tolerance:
+                #     break
+                # set varialbes after i-th variable to init values
+                # print('initial points:', initial_points)
+                x0_c = [x[i] for x in initial_points]
+                bounds_c = [bounds[i]]
+
+                cost_expr_c_tmp = cost_expr
+                cost_expr_c = []
+                constraint_list_c_tmp = constraint_list.copy()
+                constraint_list_c = []
+                for init_pt_x in initial_points:
+                    for j in range(n):
+                        if j != i:
+                            cost_expr_c_tmp = cost_expr_c_tmp.replace(f"x[{j}]", f"{init_pt_x[j]}")
+                            constraint_list_c_tmp = [c.replace(f"x{j+1}", f"{init_pt_x[j]}") for c in constraint_list_c_tmp if f"x{i+1}" in c]
+                            
+                            
+                            # replace xi to x1, now we only have one variable
+                    cost_expr_c_tmp_new = cost_expr_c_tmp.replace(f"x[{i}]", f"x[0]")
+                    
+                    cost_expr_c.append(cost_expr_c_tmp_new)
+                    constraint_list_c_tmp_new = [x.replace(f"x{i+1}", f"x[0]") for x in constraint_list_c_tmp if f"x{i+1}" in x]
+                    constraint_list_c.append(constraint_list_c_tmp_new)
+
+
+                # print(f"Initial points for variable {i+1}: {x0_c}")
+                # print(f"Bounds for variable {i+1}: {bounds_c}")
+                # print(f"Constraints for variable {i+1}: {constraint_list_c}")
+                # print(f"Cost expr for variable {i+1}: {cost_expr_c}")
+                # check convexity
+                if cnt == 0:
+                    is_convex = check_convexity(cost_expr_c[0],bounds_c, constraint_list_c[0])
+                    if not is_convex:
+                        self.result_output.append("Cost function is not convex in the given constraints:")
+                        self.result_output.append(f"When processing variable x{i+1}")
+                        return
+
+                results = []
+                with ProcessPoolExecutor() as executor:
+                    futures = [
+                        executor.submit(solve_from_initial_point, x0, cost_expr_i, constraint_c, bounds_c)
+                        for x0,cost_expr_i,constraint_c in zip(x0_c,cost_expr_c,constraint_list_c)
+                    ]
+                    for idx, future in enumerate(as_completed(futures), start=1):
+                        try:
+                            res = future.result()
+                            if res.success:
+                                
+                                results.append(res)
+
+                                # self.result_output.append(
+                                #     f"[Init {idx}] Success: cost={res.fun:.6g}, x={self._format_solution(res.x)}"
+                                # )
+                            else:
+                                self.result_output.append(f"[Init {idx}] Failed: {res.message}")
+                                results.append(res)  # still collect results
+                        except Exception as e:
+                            self.result_output.append(f"[Init {idx}] Error: {str(e)}")
+
+                if not results:
+                    self.result_output.append("\nNo successful runs found.")
+                    return
+
+                
+
+                # build new init points for next iteration
+                for k, res in enumerate(results):
+                    if res.success:
+                        new_x = res.x.copy()
+                        initial_points[k][i] = new_x  # update i-th variable
+                    else:
+                        self.result_output.append(f"Run {k+1} failed, keeping old initial point for variable {i+1}")
+
+
+                # calculate the difference between the best cost and the previous cost
+                last_cost = [res.fun for res in results]
+                if cnt == 0 and i == 0:
+                    cost_results.append(last_cost)
+                else:
+                    previous_cost_idx = results.index(min(results, key=lambda r: r.fun))
+                    if results[previous_cost_idx].success:
+                        diff = abs(cost_results[-1][previous_cost_idx] - results[previous_cost_idx].fun)
+
+                    cost_results.append(last_cost)
+                    
+            cnt += 1
+
+
+        t_end = time()
+        best = min(results, key=lambda r: r.fun)
+        selected_idx = results.index(best)
+        best_result = initial_points[selected_idx]
+
+        self.result_output.append("\n=== Best Solution ===")
+        for i, val in enumerate(best_result):
+            self.result_output.append(f"x{i+1} = {float(val):.8g}")
+        self.result_output.append(f"Minimum cost: {best.fun:.12g}")
+        self.result_output.append(f"Total time cost: {t_end - t_start:.4f} seconds")
+
+        best_cost_trace = [x[selected_idx] for x in cost_results]
+        self._plot_cost_trace(best_cost_trace)
+
+        print(f"Best solution: {best.x}, cost: {best.fun:.6g}, evaluations: {len(best.cost_trace)}")
+
+
+    def _solve_with_other_inernal_opt(self, n, num_init, bounds, cost_expr, constraint_list,mode):
+        self.result_output.clear()
+        self.result_output.append(f"Running {mode} Optimization...\n")
+
+        t_start = time()
+        # generate initial points (just take first point from grid for simplicity)
+        initial_points = generate_best_grid_points(bounds, cost_expr, constraint_list, 1)
+
+        x0 = initial_points[0]
+
+        res = solve_from_initial_point(x0, cost_expr, constraint_list, bounds,mode)
+        t_end = time()
+        
+        if res.success:
+            self.result_output.append(f"\n=== Best Solution ({mode}) ===")
+            for i, val in enumerate(res.x):
+                self.result_output.append(f"x{i+1} = {float(val):.8g}")
+            self.result_output.append(f"Minimum cost: {res.fun:.12g}")
+            self.result_output.append(f"Total time cost: {t_end - t_start:.4f} seconds")
+            self._plot_cost_trace(res.cost_trace)
+        else:
+            self.result_output.append(f"Optimization failed: {res.message}")
+
+
+    def _solve_with_GA(self, n, num_init, bounds, cost_expr, constraint_list,
+                    generations=2000, crossover_rate=0.8, mutation_rate=0.2):
+        """
+        Genetic Algorithm solver using initial points as seed population.
+        """
+        self.result_output.clear()
+        self.result_output.append("Running Genetic Algorithm Optimization...\n")
+
+        # 1. Generate initial points (from user grid selection)
+        t_start = time()
+        initial_points = generate_best_grid_points(bounds, cost_expr, constraint_list, num_init)
+        pop_size = num_init  # Use num_init as population size
+        # Ensure we have enough for GA population (fill with random if needed)
+        population = []
+        for p in initial_points:
+            population.append(np.array(p, dtype=float))
+        while len(population) < pop_size:
+            rand_point = np.array([np.random.uniform(low, high) for (low, high) in bounds])
+            population.append(rand_point)
+        population = np.array(population)
+
+        # Helper: evaluate fitness with constraints
+        def evaluate(ind):
+            if all(eval(parse_constraint_expression(c), {}, {"x": ind}) >= 0 for c in constraint_list):
+                return eval(cost_expr, {}, {"x": ind})
+            else:
+                return 1e10  # penalize infeasible
+
+        cost_trace = []
+        best_individual = None
+        best_cost = float("inf")
+
+        # 2. Run generations
+        for gen in range(generations):
+            fitness = np.array([evaluate(ind) for ind in population])
+
+            # Track best
+            gen_best_idx = np.argmin(fitness)
+            gen_best_cost = fitness[gen_best_idx]
+            if gen_best_cost < best_cost:
+                best_cost = gen_best_cost
+                best_individual = population[gen_best_idx].copy()
+
+            cost_trace.append(best_cost)
+            self.result_output.append(f"Generation {gen}: best cost = {best_cost:.6g}")
+
+            # 3. Selection (tournament)
+            selected = []
+            for _ in range(pop_size):
+                i, j = np.random.randint(0, pop_size, 2)
+                selected.append(population[i] if fitness[i] < fitness[j] else population[j])
+            selected = np.array(selected)
+
+            # 4. Crossover
+            offspring = []
+            for i in range(0, pop_size, 2):
+                p1, p2 = selected[i], selected[(i+1) % pop_size]
+                if np.random.rand() < crossover_rate:
+                    alpha = np.random.rand()
+                    child1 = alpha * p1 + (1 - alpha) * p2
+                    child2 = alpha * p2 + (1 - alpha) * p1
+                else:
+                    child1, child2 = p1.copy(), p2.copy()
+                offspring.extend([child1, child2])
+
+            offspring = np.array(offspring)
+
+            # 5. Mutation
+            for ind in offspring:
+                if np.random.rand() < mutation_rate:
+                    k = np.random.randint(n)
+                    ind[k] = np.random.uniform(bounds[k][0], bounds[k][1])
+
+            population = offspring
+
+        # Final results
+        t_end = time()
+        self.result_output.append("\n=== Best Solution (GA) ===")
+        for i, val in enumerate(best_individual):
+            self.result_output.append(f"x{i+1} = {float(val):.8g}")
+        self.result_output.append(f"Minimum cost: {best_cost:.12g}")
+        self.result_output.append(f"Total time cost: {t_end - t_start:.4f} seconds")
+        self._plot_cost_trace(cost_trace)
+
+
 
     def solve_optimization(self):
         try:
@@ -295,123 +553,16 @@ class OptimizationApp(QWidget):
                 parts = [p.strip() for p in re.split(r'[,;\n]+', raw_cons) if p.strip()]
                 constraint_list = parts
 
-            initial_points = generate_best_grid_points(bounds, cost_expr, constraint_list, num_init, step=0.01)
 
-            # solve the optimization problem for the i-th variable
-            self.result_output.clear()
-            
-
-            cnt,i = 0,0
-            tolerance = 1e-6
-            diff = 1.0
-            cost_results = []
-            # start Coordinate Descent with multiple initial points
-            while diff > tolerance and cnt < 100:
-                
-                self.result_output.append(f"Running Multi-Point CD iteraion {cnt}...\n")
-                
-                
-                for i in range(n):
-                    
-                    # if diff <= tolerance:
-                    #     break
-                    # set varialbes after i-th variable to init values
-                    # print('initial points:', initial_points)
-                    x0_c = [x[i] for x in initial_points]
-                    bounds_c = [bounds[i]]
-
-                    cost_expr_c_tmp = cost_expr
-                    cost_expr_c = []
-                    constraint_list_c_tmp = constraint_list.copy()
-                    constraint_list_c = []
-                    for init_pt_x in initial_points:
-                        for j in range(n):
-                            if j != i:
-                                cost_expr_c_tmp = cost_expr_c_tmp.replace(f"x[{j}]", f"{init_pt_x[j]}")
-                                constraint_list_c_tmp = [c.replace(f"x{j+1}", f"{init_pt_x[j]}") for c in constraint_list_c_tmp if f"x{i+1}" in c]
-                                
-                                
-                                # replace xi to x1, now we only have one variable
-                        cost_expr_c_tmp_new = cost_expr_c_tmp.replace(f"x[{i}]", f"x[0]")
-                        
-                        cost_expr_c.append(cost_expr_c_tmp_new)
-                        constraint_list_c_tmp_new = [x.replace(f"x{i+1}", f"x[0]") for x in constraint_list_c_tmp if f"x{i+1}" in x]
-                        constraint_list_c.append(constraint_list_c_tmp_new)
-
-
-                    print(f"Initial points for variable {i+1}: {x0_c}")
-                    print(f"Bounds for variable {i+1}: {bounds_c}")
-                    print(f"Constraints for variable {i+1}: {constraint_list_c}")
-                    print(f"Cost expr for variable {i+1}: {cost_expr_c}")
-                    # check convexity
-                    if cnt == 0:
-                        is_convex = check_convexity(cost_expr_c[0],bounds_c, constraint_list_c[0])
-                        if not is_convex:
-                            self.result_output.append("Cost function is not convex in the given constraints:")
-                            self.result_output.append(f"When processing variable x{i+1}")
-                            return
-
-                    results = []
-                    with ProcessPoolExecutor() as executor:
-                        futures = [
-                            executor.submit(solve_from_initial_point, x0, cost_expr_i, constraint_c, bounds_c)
-                            for x0,cost_expr_i,constraint_c in zip(x0_c,cost_expr_c,constraint_list_c)
-                        ]
-                        for idx, future in enumerate(as_completed(futures), start=1):
-                            try:
-                                res = future.result()
-                                if res.success:
-                                    
-                                    results.append(res)
-
-                                    # self.result_output.append(
-                                    #     f"[Init {idx}] Success: cost={res.fun:.6g}, x={self._format_solution(res.x)}"
-                                    # )
-                                else:
-                                    self.result_output.append(f"[Init {idx}] Failed: {res.message}")
-                            except Exception as e:
-                                self.result_output.append(f"[Init {idx}] Error: {str(e)}")
-
-                    if not results:
-                        self.result_output.append("\nNo successful runs found.")
-                        return
-
-                    
-
-                    # build new init points for next iteration
-                    for k, res in enumerate(results):
-                        if res.success:
-                            new_x = res.x.copy()
-                            initial_points[k][i] = new_x  # update i-th variable
-
-                    # calculate the difference between the best cost and the previous cost
-                    last_cost = [res.fun for res in results]
-                    if cnt == 0 and i == 0:
-                        cost_results.append(last_cost)
-                    else:
-                        previous_cost_idx = results.index(min(results, key=lambda r: r.fun))
-                        diff = abs(cost_results[-1][previous_cost_idx] - results[previous_cost_idx].fun)
-                        cost_results.append(last_cost)
-                        
-                cnt += 1
-
-
-
-            best = min(results, key=lambda r: r.fun)
-            selected_idx = results.index(best)
-            best_result = initial_points[selected_idx]
-
-            self.result_output.append("\n=== Best Solution ===")
-            for i, val in enumerate(best_result):
-                self.result_output.append(f"x{i+1} = {float(val):.8g}")
-            self.result_output.append(f"Minimum cost: {best.fun:.12g}")
-            self.result_output.append(f"Number of cost evaluations (best run): {(i+1)*(cnt+1)+i+1}")
-
-            best_cost_trace = [x[selected_idx] for x in cost_results]
-            self._plot_cost_trace(best_cost_trace)
-
-            print(f"Best solution: {best.x}, cost: {best.fun:.6g}, evaluations: {len(best.cost_trace)}")
-
+            # select optimization algorithm
+            algo = self.algo_selector.currentText()
+            if algo == "SLSQP" or algo == "COBYLA" or algo == "trust-constr":
+                # use SLSQP or COBYLA or trust-constr
+                self._solve_with_other_inernal_opt(n, num_init, bounds, cost_expr, constraint_list,algo)
+            elif algo == "Multi-Start CD":
+                self._solve_with_Multi_SCD(n, num_init, bounds, cost_expr, constraint_list)
+            elif algo == "GA":
+                self._solve_with_GA(n, num_init, bounds, cost_expr, constraint_list)
         
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
