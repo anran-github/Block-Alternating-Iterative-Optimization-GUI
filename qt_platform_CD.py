@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QLabel, QVBoxLayout, QLineEdit, QTextEdit,
-    QPushButton, QMessageBox, QHBoxLayout
+    QPushButton, QMessageBox, QHBoxLayout,QFileDialog,QComboBox
 )
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -12,49 +12,90 @@ from scipy.optimize import minimize
 import sympy as sp
 from sympy.calculus.util import minimum
 from time import time
-from PyQt5.QtWidgets import QComboBox
+import json
+# import re
+# import numexpr as ne
 
 
-def generate_best_grid_points(bounds, cost_expr, constraint_exprs, S, step=0.1):
-    # Generate grid points for each variable
-    total_vars = len(bounds)
-    # assign number of points based on variable ranges:
-    num_pts = []
+
+# def generate_best_grid_points(bounds, cost_expr, constraint_exprs, S):
+#     # Generate grid points for each variable
+#     total_vars = len(bounds)
+#     # assign number of points based on variable ranges:
+#     num_pts = []
+#     grids = []
+#     for (low, high) in bounds:
+#         if  (high - low) <= 10:
+#             num_pts.append(50)
+#         elif (high - low) > 10 and (high - low) <= 100:
+#             num_pts.append(100)
+#         elif (high - low) > 100 and (high - low) <= 500:
+#             num_pts.append(500)
+#         elif (high - low) > 500:
+#             num_pts.append(1000)
+
+#         grids.append(np.linspace(low, high, num_pts[-1]))
+            
+
+#     # grids = [np.linspace(low, high, step) for enumerate(low, high) in bounds]
+#     mesh = np.meshgrid(*grids, indexing='xy')
+#     candidates = np.vstack([m.flatten() for m in mesh]).T
+#     print(candidates.shape, "candidates shape")
+#     # Prepare constraint functions
+#     constraint_funcs = []
+#     for expr in constraint_exprs:
+#         if expr.strip():
+#             transformed = parse_constraint_expression(expr.strip())
+#             constraint_funcs.append(lambda x, e=transformed: eval(e, {}, {"x": x}) >= 0)
+
+#     valid_points = []
+#     for point in candidates:
+#         # Check constraints
+#         if all(f(point) for f in constraint_funcs):
+#             cost_val = eval(cost_expr, {}, {"x": point})
+#             valid_points.append((cost_val, point))
+    
+#     # Sort by cost and take top S
+#     valid_points.sort(key=lambda t: t[0])
+#     return [np.round(p,5) for _, p in valid_points[:S]]
+
+
+def generate_best_grid_points(bounds, cost_expr, constraint_exprs, S, max_candidates=100):
+    n = len(bounds)
+
     grids = []
     for (low, high) in bounds:
-        if  (high - low) <= 10:
-            num_pts.append(50)
-        elif (high - low) > 10 and (high - low) <= 100:
-            num_pts.append(100)
-        elif (high - low) > 100 and (high - low) <= 500:
-            num_pts.append(500)
-        elif (high - low) > 500:
-            num_pts.append(1000)
-
-        grids.append(np.linspace(low, high, num_pts[-1]))
+        grids.append(np.linspace(low, high, 50))
             
 
     # grids = [np.linspace(low, high, step) for enumerate(low, high) in bounds]
     mesh = np.meshgrid(*grids, indexing='xy')
-    candidates = np.vstack([m.flatten() for m in mesh]).T
-    print(candidates.shape, "candidates shape")
-    # Prepare constraint functions
-    constraint_funcs = []
-    for expr in constraint_exprs:
-        if expr.strip():
-            transformed = parse_constraint_expression(expr.strip())
-            constraint_funcs.append(lambda x, e=transformed: eval(e, {}, {"x": x}) >= 0)
+    candidates_uniform = np.vstack([m.flatten() for m in mesh]).T
 
     valid_points = []
-    for point in candidates:
-        # Check constraints
-        if all(f(point) for f in constraint_funcs):
-            cost_val = eval(cost_expr, {}, {"x": point})
-            valid_points.append((cost_val, point))
+    constraint_funcs = [lambda x, e=parse_constraint_expression(c): eval(e, {}, {"x": x}) >= 0 for c in constraint_exprs if c.strip()]
     
-    # Sort by cost and take top S
+    for pt in candidates_uniform:
+        if all(f(pt) for f in constraint_funcs):
+            cost_val = eval(cost_expr, {}, {"x": pt})
+            valid_points.append((cost_val, pt))
+
+    # add more feasible points if not enough
+    while len(valid_points) < S:
+        candidates = np.array([
+            [np.random.uniform(low, high) for (low, high) in bounds]
+            for _ in range(max_candidates)
+        ])
+        # evaluate cost only on feasible
+        
+        for pt in candidates:
+            if all(f(pt) for f in constraint_funcs):
+                cost_val = eval(cost_expr, {}, {"x": pt})
+                valid_points.append((cost_val, pt))
+                
     valid_points.sort(key=lambda t: t[0])
-    return [np.round(p,5) for _, p in valid_points[:S]]
+
+    return [np.round(p, 5) for _, p in valid_points[:S]]
 
 
 
@@ -144,7 +185,11 @@ def solve_from_initial_point(x0, cost_expr, constraint_exprs, bounds, mode="SLSQ
 
         cons.append({"type": "ineq", "fun": make_fun(transformed)})
 
-    result = minimize(cost_fn, x0, method=mode, bounds=bounds, constraints=cons)
+    if mode == "Multi-Start CD":
+        result = minimize(cost_fn, x0, method='SLSQP', bounds=bounds, constraints=cons,options={'maxiter': 5})
+    else:
+        result = minimize(cost_fn, x0, method=mode, bounds=bounds, constraints=cons) #, options={'disp': True, 'maxiter': 1000})
+
     result.cost_trace = cost_values
     return result
 
@@ -200,7 +245,7 @@ class OptimizationApp(QWidget):
         solve_mode = QHBoxLayout()
         solve_mode.addWidget(QLabel("Select Optimization Algorithm:"))
         self.algo_selector = QComboBox()
-        self.algo_selector.addItems(["Multi-Start CD", "SLSQP", "COBYLA","trust-constr", "GA"])
+        self.algo_selector.addItems(["Multi-Start CD", "SLSQP", "COBYLA","trust-constr", "GA", "Particle Swarm"])
         solve_mode.addWidget(self.algo_selector)
 
         self.solve_button = QPushButton("Solve (parallel)")
@@ -232,7 +277,22 @@ class OptimizationApp(QWidget):
         layout.addWidget(QLabel("Best Cost Trace:"))
         layout.addWidget(self.plot_canvas)
 
+
+        # Create Export button
+        self.export_button = QPushButton("Export plot")
+        self.export_button.clicked.connect(self.export_plot)
+
+        # Add it at bottom-right
+        bottom_layout = QHBoxLayout()
+        bottom_layout.addStretch(1)  # push button to right
+        bottom_layout.addWidget(self.export_button)
+        layout.addLayout(bottom_layout)        
+
         self.setLayout(layout)
+
+
+        self.executor = ProcessPoolExecutor()
+
 
     def _parse_bounds(self, n):
         default_bound = (-1e6, 1e6)
@@ -297,7 +357,7 @@ class OptimizationApp(QWidget):
         self.result_output.append("Running Multi-Starting Point CD Optimization...\n")
 
         t_start = time()
-        initial_points = generate_best_grid_points(bounds, cost_expr, constraint_list, num_init, step=0.01)
+        initial_points = generate_best_grid_points(bounds, cost_expr, constraint_list, num_init)
 
         # solve the optimization problem for the i-th variable
         self.result_output.clear()
@@ -347,34 +407,35 @@ class OptimizationApp(QWidget):
                 # print(f"Constraints for variable {i+1}: {constraint_list_c}")
                 # print(f"Cost expr for variable {i+1}: {cost_expr_c}")
                 # check convexity
-                if cnt == 0:
-                    is_convex = check_convexity(cost_expr_c[0],bounds_c, constraint_list_c[0])
-                    if not is_convex:
-                        self.result_output.append("Cost function is not convex in the given constraints:")
-                        self.result_output.append(f"When processing variable x{i+1}")
-                        return
+                
+                # WARNING: THIS CHECKING OPERATION IS EXPENSIVE, COMMENT OUT TO SPEED UP.
+                # if cnt == 0:
+                #     is_convex = check_convexity(cost_expr_c[0],bounds_c, constraint_list_c[0])
+                #     if not is_convex:
+                #         self.result_output.append("Cost function is not convex in the given constraints:")
+                #         self.result_output.append(f"When processing variable x{i+1}")
+                #         return
 
                 results = []
-                with ProcessPoolExecutor() as executor:
-                    futures = [
-                        executor.submit(solve_from_initial_point, x0, cost_expr_i, constraint_c, bounds_c)
-                        for x0,cost_expr_i,constraint_c in zip(x0_c,cost_expr_c,constraint_list_c)
-                    ]
-                    for idx, future in enumerate(as_completed(futures), start=1):
-                        try:
-                            res = future.result()
-                            if res.success:
-                                
-                                results.append(res)
+                futures = [
+                    self.executor.submit(solve_from_initial_point, x0, cost_expr_i, constraint_c, bounds_c,"Multi-Start CD")
+                    for x0,cost_expr_i,constraint_c in zip(x0_c,cost_expr_c,constraint_list_c)
+                ]
+                for idx, future in enumerate(as_completed(futures), start=1):
+                    try:
+                        res = future.result()
+                        if res.success:
+                            
+                            results.append(res)
 
-                                # self.result_output.append(
-                                #     f"[Init {idx}] Success: cost={res.fun:.6g}, x={self._format_solution(res.x)}"
-                                # )
-                            else:
-                                self.result_output.append(f"[Init {idx}] Failed: {res.message}")
-                                results.append(res)  # still collect results
-                        except Exception as e:
-                            self.result_output.append(f"[Init {idx}] Error: {str(e)}")
+                            # self.result_output.append(
+                            #     f"[Init {idx}] Success: cost={res.fun:.6g}, x={self._format_solution(res.x)}"
+                            # )
+                        else:
+                            self.result_output.append(f"[Init {idx}] Failed: {res.message}")
+                            results.append(res)  # still collect results
+                    except Exception as e:
+                        self.result_output.append(f"[Init {idx}] Error: {str(e)}")
 
                 if not results:
                     self.result_output.append("\nNo successful runs found.")
@@ -417,7 +478,7 @@ class OptimizationApp(QWidget):
         self.result_output.append(f"Total time cost: {t_end - t_start:.4f} seconds")
 
         best_cost_trace = [x[selected_idx] for x in cost_results]
-        self._plot_cost_trace(best_cost_trace)
+        self._plot_cost_trace(best_cost_trace,method="Multi_SCD")
 
         print(f"Best solution: {best.x}, cost: {best.fun:.6g}, evaluations: {len(best.cost_trace)}")
 
@@ -441,13 +502,13 @@ class OptimizationApp(QWidget):
                 self.result_output.append(f"x{i+1} = {float(val):.8g}")
             self.result_output.append(f"Minimum cost: {res.fun:.12g}")
             self.result_output.append(f"Total time cost: {t_end - t_start:.4f} seconds")
-            self._plot_cost_trace(res.cost_trace)
+            self._plot_cost_trace(res.cost_trace,method=mode)
         else:
             self.result_output.append(f"Optimization failed: {res.message}")
 
 
     def _solve_with_GA(self, n, num_init, bounds, cost_expr, constraint_list,
-                    generations=2000, crossover_rate=0.8, mutation_rate=0.2):
+                    generations=200, crossover_rate=0.8, mutation_rate=0.2):
         """
         Genetic Algorithm solver using initial points as seed population.
         """
@@ -528,7 +589,99 @@ class OptimizationApp(QWidget):
             self.result_output.append(f"x{i+1} = {float(val):.8g}")
         self.result_output.append(f"Minimum cost: {best_cost:.12g}")
         self.result_output.append(f"Total time cost: {t_end - t_start:.4f} seconds")
-        self._plot_cost_trace(cost_trace)
+        self._plot_cost_trace(cost_trace,method="GA")
+
+
+    def _solve_with_PSO(self, n, num_init, bounds, cost_expr, constraint_list,
+                         max_iter=200, w=0.7, c1=1.5, c2=1.5):
+        """
+        Particle Swarm Optimization
+        w: inertia weight
+        c1, c2: cognitive and social coefficients
+        """
+        swarm_size = num_init
+        self.result_output.clear()
+        self.result_output.append("Running Particle Swarm Optimization...\n")
+
+        # Helper to evaluate cost with constraint penalty
+        def evaluate(x):
+            feasible = all(eval(parse_constraint_expression(c), {}, {"x": x}) >= 0 for c in constraint_list)
+            if feasible:
+                return eval(cost_expr, {}, {"x": x})
+            else:
+                return 1e10  # penalize infeasible
+
+        t_start = time()
+
+        # 1. Seed initial particles from grid
+        initial_points = generate_best_grid_points(bounds, cost_expr, constraint_list, num_init)
+
+        particles = []
+        for p in initial_points:
+            particles.append(np.array(p, dtype=float))
+        while len(particles) < swarm_size:
+            rand_point = np.array([np.random.uniform(low, high) for (low, high) in bounds])
+            particles.append(rand_point)
+        particles = np.array(particles)
+
+        # 2. Initialize velocities
+        velocities = np.zeros_like(particles)
+
+        # 3. Initialize personal and global bests
+        pbest = particles.copy()
+        pbest_cost = np.array([evaluate(p) for p in pbest])
+
+        gbest_idx = np.argmin(pbest_cost)
+        gbest = pbest[gbest_idx].copy()
+        gbest_cost = pbest_cost[gbest_idx]
+
+        cost_trace = [gbest_cost]
+
+        # 4. Main PSO loop
+        for iter in range(max_iter):
+            for i in range(swarm_size):
+                # Update velocity
+                r1, r2 = np.random.rand(n), np.random.rand(n)
+                velocities[i] = (
+                    w * velocities[i] +
+                    c1 * r1 * (pbest[i] - particles[i]) +
+                    c2 * r2 * (gbest - particles[i])
+                )
+
+                # Update position with velocity
+                particles[i] = particles[i] + velocities[i]
+
+                # Enforce bounds
+                for d in range(n):
+                    low, high = bounds[d]
+                    particles[i][d] = np.clip(particles[i][d], low, high)
+
+                # Evaluate
+                cost = evaluate(particles[i])
+
+                # Update personal best
+                if cost < pbest_cost[i]:
+                    pbest[i] = particles[i].copy()
+                    pbest_cost[i] = cost
+
+                    # Update global best
+                    if cost < gbest_cost:
+                        gbest = particles[i].copy()
+                        gbest_cost = cost
+
+            cost_trace.append(gbest_cost)
+            self.result_output.append(f"Iteration {iter+1}: best cost = {gbest_cost:.6g}")
+
+        time_end = time()
+        
+        # Final results
+        self.result_output.append("\n=== Best Solution (PSO) ===")
+        for i, val in enumerate(gbest):
+            self.result_output.append(f"x{i+1} = {float(val):.8g}")
+        self.result_output.append(f"Minimum cost: {gbest_cost:.12g}")
+        self.result_output.append(f"Total time cost: {time_end - t_start:.4f} seconds")
+
+        self._plot_cost_trace(cost_trace,method="PSO")
 
 
 
@@ -563,6 +716,8 @@ class OptimizationApp(QWidget):
                 self._solve_with_Multi_SCD(n, num_init, bounds, cost_expr, constraint_list)
             elif algo == "GA":
                 self._solve_with_GA(n, num_init, bounds, cost_expr, constraint_list)
+            elif algo == "Particle Swarm":
+                self._solve_with_PSO(n, num_init, bounds, cost_expr, constraint_list)
         
         except Exception as e:
             QMessageBox.critical(self, "Error", str(e))
@@ -570,7 +725,9 @@ class OptimizationApp(QWidget):
     def _format_solution(self, arr):
         return "[" + ", ".join(f"x{i+1}={v:.6g}" for i, v in enumerate(arr)) + "]"
 
-    def _plot_cost_trace(self, trace):
+
+    def _plot_cost_trace(self, trace,method="Multi_SCD"):
+        self.plot_data = {"method": method, "results": trace}
         self.plot_canvas.figure.clear()
         ax = self.plot_canvas.figure.add_subplot(111)
         ax.plot(trace, marker='o')
@@ -579,6 +736,31 @@ class OptimizationApp(QWidget):
         ax.set_ylabel("Cost")
         ax.grid(True)
         self.plot_canvas.draw()
+
+
+    # Function to handle export
+    def export_plot(self):
+        if not hasattr(self, "plot_data") or not self.plot_data:
+            QMessageBox.warning(self, "No Data", "No plot data available to export.")
+            return
+
+        # Example: assume you store results in self.plot_data like:
+        # self.plot_data = {"method": "Multi_SCD", "results": [(x1,y1), (x2,y2), ...]}
+        method = self.plot_data.get("method", "unknown")
+        filename = f"{method}_results.json"
+
+        # Ask user where to save
+        filepath, _ = QFileDialog.getSaveFileName(self, "Save Plot Data", filename, "JSON Files (*.json)")
+        if not filepath:
+            return
+
+        try:
+            with open(filepath, "w") as f:
+                json.dump(self.plot_data, f, indent=4)
+
+            QMessageBox.information(self, "Export Successful", f"File saved: {filepath}")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to save file:\n{e}")
 
 
 if __name__ == "__main__":
