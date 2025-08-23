@@ -13,6 +13,8 @@ import sympy as sp
 from sympy.calculus.util import minimum
 from time import time
 import json
+from joblib import Parallel, delayed
+
 # import re
 # import numexpr as ne
 
@@ -63,37 +65,48 @@ import json
 def generate_best_grid_points(bounds, cost_expr, constraint_exprs, S, max_candidates=100):
     n = len(bounds)
 
-    grids = []
-    for (low, high) in bounds:
-        grids.append(np.linspace(low, high, 50))
-            
+    max_size = 100
+    step_init = [2*(high-low) if (high-low) <=  max_size else max_size for (low, high) in bounds]
 
-    # grids = [np.linspace(low, high, step) for enumerate(low, high) in bounds]
-    mesh = np.meshgrid(*grids, indexing='xy')
-    candidates_uniform = np.vstack([m.flatten() for m in mesh]).T
 
     valid_points = []
-    constraint_funcs = [lambda x, e=parse_constraint_expression(c): eval(e, {}, {"x": x}) >= 0 for c in constraint_exprs if c.strip()]
-    
-    for pt in candidates_uniform:
-        if all(f(pt) for f in constraint_funcs):
-            cost_val = eval(cost_expr, {}, {"x": pt})
-            valid_points.append((cost_val, pt))
-
-    # add more feasible points if not enough
     while len(valid_points) < S:
-        candidates = np.array([
-            [np.random.uniform(low, high) for (low, high) in bounds]
-            for _ in range(max_candidates)
-        ])
-        # evaluate cost only on feasible
+        grids = []
+        for i,(low, high) in enumerate(bounds):
+            grids.append(np.linspace(low, high, int(step_init[i])).tolist())
+                
+
+        # grids = [np.linspace(low, high, step) for enumerate(low, high) in bounds]
+        mesh = np.meshgrid(*grids, indexing='ij')
+        candidates_uniform = np.vstack([m.flatten() for m in mesh]).T
+
+        constraint_funcs = [lambda x, e=parse_constraint_expression(c): eval(e, {}, {"x": x}) >= 0 for c in constraint_exprs if c.strip()]
         
-        for pt in candidates:
+        for pt in candidates_uniform:
             if all(f(pt) for f in constraint_funcs):
                 cost_val = eval(cost_expr, {}, {"x": pt})
                 valid_points.append((cost_val, pt))
+
+
+        step_init = (np.array(step_init) * 1.5 ).tolist()
+
+    # # add more feasible points if not enough
+    # while len(valid_points) < S:
+    #     candidates = np.array([
+    #         [np.random.uniform(low, high) for (low, high) in bounds]
+    #         for _ in range(max_candidates)
+    #     ])
+    #     # evaluate cost only on feasible
+        
+    #     for pt in candidates:
+    #         if all(f(pt) for f in constraint_funcs):
+    #             cost_val = eval(cost_expr, {}, {"x": pt})
+    #             valid_points.append((cost_val, pt))
                 
     valid_points.sort(key=lambda t: t[0])
+
+    # select S/2 pints from top, extra S/2 from rest set randomly
+    # valid_points = valid_points[:S//2] + np.random.choice(valid_points[S//2:], size=S//2, replace=False).tolist()
 
     return [np.round(p, 5) for _, p in valid_points[:S]]
 
@@ -292,6 +305,7 @@ class OptimizationApp(QWidget):
 
 
         self.executor = ProcessPoolExecutor()
+        self.Parallel_Computation = Parallel(n_jobs=-1)
 
 
     def _parse_bounds(self, n):
@@ -352,124 +366,222 @@ class OptimizationApp(QWidget):
         
 
 
-    def _solve_with_Multi_SCD(self, n, num_init, bounds, cost_expr, constraint_list):
+    # def _solve_with_Multi_SCD(self, n, num_init, bounds, cost_expr, constraint_list):
 
-        self.result_output.append("Running Multi-Starting Point CD Optimization...\n")
+    #     self.result_output.append("Running Multi-Starting Point CD Optimization...\n")
 
-        t_start = time()
-        initial_points = generate_best_grid_points(bounds, cost_expr, constraint_list, num_init)
+    #     t_start = time()
+    #     initial_points = generate_best_grid_points(bounds, cost_expr, constraint_list, num_init)
 
-        # solve the optimization problem for the i-th variable
-        self.result_output.clear()
+    #     # solve the optimization problem for the i-th variable
+    #     self.result_output.clear()
         
 
-        cnt,i = 0,0
-        tolerance = 1e-6
-        diff = 1.0
-        cost_results = []
-        # start Coordinate Descent with multiple initial points
-        while diff > tolerance and cnt < 100:
+    #     cnt,i = 0,0
+    #     tolerance = 1e-6
+    #     diff = 1.0
+    #     cost_results = []
+    #     # start Coordinate Descent with multiple initial points
+    #     while diff > tolerance and cnt < 100:
             
-            self.result_output.append(f"Running Multi-Point CD iteraion {cnt}...\n")
+    #         self.result_output.append(f"Running Multi-Point CD iteraion {cnt}...\n")
             
-            order = list(range(n))
-            # np.random.shuffle(order)  # random order of variables
-            for i in order:
+    #         order = list(range(n))
+    #         # np.random.shuffle(order)  # random order of variables
+    #         for i in order:
                 
-                # if diff <= tolerance:
-                #     break
-                # set varialbes after i-th variable to init values
-                # print('initial points:', initial_points)
-                x0_c = [x[i] for x in initial_points]
-                bounds_c = [bounds[i]]
+    #             # if diff <= tolerance:
+    #             #     break
+    #             # set varialbes after i-th variable to init values
+    #             # print('initial points:', initial_points)
+    #             x0_c = [x[i] for x in initial_points]
+    #             bounds_c = [bounds[i]]
 
-                cost_expr_c_tmp = cost_expr
-                cost_expr_c = []
-                constraint_list_c_tmp = constraint_list.copy()
-                constraint_list_c = []
-                for init_pt_x in initial_points:
+    #             cost_expr_c_tmp = cost_expr
+    #             cost_expr_c = []
+    #             constraint_list_c_tmp = constraint_list.copy()
+    #             constraint_list_c = []
+    #             for init_pt_x in initial_points:
+    #                 for j in range(n):
+    #                     if j != i:
+    #                         cost_expr_c_tmp = cost_expr_c_tmp.replace(f"x[{j}]", f"{init_pt_x[j]}")
+    #                         constraint_list_c_tmp = [c.replace(f"x{j+1}", f"{init_pt_x[j]}") for c in constraint_list_c_tmp if f"x{i+1}" in c]
+                            
+                            
+    #                         # replace xi to x1, now we only have one variable
+    #                 cost_expr_c_tmp_new = cost_expr_c_tmp.replace(f"x[{i}]", f"x[0]")
+                    
+    #                 cost_expr_c.append(cost_expr_c_tmp_new)
+    #                 constraint_list_c_tmp_new = [x.replace(f"x{i+1}", f"x[0]") for x in constraint_list_c_tmp if f"x{i+1}" in x]
+    #                 constraint_list_c.append(constraint_list_c_tmp_new)
+
+
+    #             # print(f"Initial points for variable {i+1}: {x0_c}")
+    #             # print(f"Bounds for variable {i+1}: {bounds_c}")
+    #             # print(f"Constraints for variable {i+1}: {constraint_list_c}")
+    #             # print(f"Cost expr for variable {i+1}: {cost_expr_c}")
+    #             # check convexity
+                
+    #             # WARNING: THIS CHECKING OPERATION IS EXPENSIVE, COMMENT OUT TO SPEED UP.
+    #             # if cnt == 0:
+    #             #     is_convex = check_convexity(cost_expr_c[0],bounds_c, constraint_list_c[0])
+    #             #     if not is_convex:
+    #             #         self.result_output.append("Cost function is not convex in the given constraints:")
+    #             #         self.result_output.append(f"When processing variable x{i+1}")
+    #             #         return
+
+    #             results = []
+    #             futures = [
+    #                 self.executor.submit(solve_from_initial_point, x0, cost_expr_i, constraint_c, bounds_c,"Multi-Start CD")
+    #                 for x0,cost_expr_i,constraint_c in zip(x0_c,cost_expr_c,constraint_list_c)
+    #             ]
+    #             for idx, future in enumerate(as_completed(futures), start=1):
+    #                 try:
+    #                     res = future.result()
+    #                     if res.success:
+                            
+    #                         results.append(res)
+
+    #                         # self.result_output.append(
+    #                         #     f"[Init {idx}] Success: cost={res.fun:.6g}, x={self._format_solution(res.x)}"
+    #                         # )
+    #                     else:
+    #                         self.result_output.append(f"[Init {idx}] Failed: {res.message}")
+    #                         results.append(res)  # still collect results
+    #                 except Exception as e:
+    #                     self.result_output.append(f"[Init {idx}] Error: {str(e)}")
+
+    #             if not results:
+    #                 self.result_output.append("\nNo successful runs found.")
+    #                 return
+
+                
+
+    #             # build new init points for next iteration
+    #             for k, res in enumerate(results):
+    #                 if res.success:
+    #                     new_x = res.x.copy()
+    #                     initial_points[k][i] = new_x  # update i-th variable
+    #                 else:
+    #                     self.result_output.append(f"Run {k+1} failed, keeping old initial point for variable {i+1}")
+
+
+    #             # calculate the difference between the best cost and the previous cost
+    #             last_cost = [res.fun for res in results]
+    #             if cnt == 0 and i == 0:
+    #                 cost_results.append(last_cost)
+    #             else:
+    #                 previous_cost_idx = results.index(min(results, key=lambda r: r.fun))
+    #                 if results[previous_cost_idx].success:
+    #                     diff = abs(cost_results[-1][previous_cost_idx] - results[previous_cost_idx].fun)
+
+    #                 cost_results.append(last_cost)
+                    
+    #         cnt += 1
+
+
+    #     t_end = time()
+    #     best = min(results, key=lambda r: r.fun)
+    #     selected_idx = results.index(best)
+    #     best_result = initial_points[selected_idx]
+
+    #     self.result_output.append("\n=== Best Solution ===")
+    #     for i, val in enumerate(best_result):
+    #         self.result_output.append(f"x{i+1} = {float(val):.8g}")
+    #     self.result_output.append(f"Minimum cost: {best.fun:.12g}")
+    #     self.result_output.append(f"Total time cost: {t_end - t_start:.4f} seconds")
+
+    #     best_cost_trace = [x[selected_idx] for x in cost_results]
+    #     self._plot_cost_trace(best_cost_trace,method="Multi_SCD")
+
+    #     print(f"Best solution: {best.x}, cost: {best.fun:.6g}, evaluations: {len(best.cost_trace)}")
+
+    def _solve_with_Multi_SCD(self,n, S, bounds, cost_expr, constraint_list, tol=1e-4, max_iters=50):
+        self.result_output.clear()
+        self.result_output.append("Running Multi-Starting Point CD Optimization...\n")
+
+
+        n = len(bounds)
+
+        # Latin Hypercube initial points
+        t_start = time()
+        initial_points = generate_best_grid_points(bounds, cost_expr, constraint_list, S)
+
+        cost_results = []
+        diff = tol + 1
+        iter_count = 0
+
+        while diff > tol and iter_count < max_iters:
+
+            def optimize_point(init_pt_x):
+                """Run coordinate descent on a single starting point"""
+                pt = init_pt_x.copy()
+                results = []
+                for i in range(n):  # optimize each coordinate
+
+                    # fresh copies of cost and constraints
+                    cost_expr_c_tmp = cost_expr
+                    constraint_list_c_tmp = constraint_list.copy()
+
+                    # substitute fixed variables
                     for j in range(n):
                         if j != i:
-                            cost_expr_c_tmp = cost_expr_c_tmp.replace(f"x[{j}]", f"{init_pt_x[j]}")
-                            constraint_list_c_tmp = [c.replace(f"x{j+1}", f"{init_pt_x[j]}") for c in constraint_list_c_tmp if f"x{i+1}" in c]
-                            
-                            
-                            # replace xi to x1, now we only have one variable
-                    cost_expr_c_tmp_new = cost_expr_c_tmp.replace(f"x[{i}]", f"x[0]")
-                    
-                    cost_expr_c.append(cost_expr_c_tmp_new)
-                    constraint_list_c_tmp_new = [x.replace(f"x{i+1}", f"x[0]") for x in constraint_list_c_tmp if f"x{i+1}" in x]
-                    constraint_list_c.append(constraint_list_c_tmp_new)
+                            cost_expr_c_tmp = cost_expr_c_tmp.replace(f"x[{j}]", str(pt[j]))
+                            constraint_list_c_tmp = [
+                                c.replace(f"x{j+1}", str(pt[j])) for c in constraint_list_c_tmp
+                            ]
 
+                    # rename the active variable to x[0]
+                    cost_expr_c_tmp = cost_expr_c_tmp.replace(f"x[{i}]", "x[0]")
+                    constraint_list_c_tmp = [c.replace(f"x{i+1}", "x[0]") for c in constraint_list_c_tmp]
 
-                # print(f"Initial points for variable {i+1}: {x0_c}")
-                # print(f"Bounds for variable {i+1}: {bounds_c}")
-                # print(f"Constraints for variable {i+1}: {constraint_list_c}")
-                # print(f"Cost expr for variable {i+1}: {cost_expr_c}")
-                # check convexity
-                
-                # WARNING: THIS CHECKING OPERATION IS EXPENSIVE, COMMENT OUT TO SPEED UP.
-                # if cnt == 0:
-                #     is_convex = check_convexity(cost_expr_c[0],bounds_c, constraint_list_c[0])
-                #     if not is_convex:
-                #         self.result_output.append("Cost function is not convex in the given constraints:")
-                #         self.result_output.append(f"When processing variable x{i+1}")
-                #         return
-
-                results = []
-                futures = [
-                    self.executor.submit(solve_from_initial_point, x0, cost_expr_i, constraint_c, bounds_c,"Multi-Start CD")
-                    for x0,cost_expr_i,constraint_c in zip(x0_c,cost_expr_c,constraint_list_c)
-                ]
-                for idx, future in enumerate(as_completed(futures), start=1):
-                    try:
-                        res = future.result()
-                        if res.success:
-                            
-                            results.append(res)
-
-                            # self.result_output.append(
-                            #     f"[Init {idx}] Success: cost={res.fun:.6g}, x={self._format_solution(res.x)}"
-                            # )
-                        else:
-                            self.result_output.append(f"[Init {idx}] Failed: {res.message}")
-                            results.append(res)  # still collect results
-                    except Exception as e:
-                        self.result_output.append(f"[Init {idx}] Error: {str(e)}")
-
-                if not results:
-                    self.result_output.append("\nNo successful runs found.")
-                    return
-
-                
-
-                # build new init points for next iteration
-                for k, res in enumerate(results):
+                    # optimize
+                    res = solve_from_initial_point(
+                        [pt[i]],
+                        cost_expr_c_tmp,
+                        constraint_list_c_tmp,
+                        [bounds[i]],
+                        "Multi-Start CD"
+                    )
                     if res.success:
-                        new_x = res.x.copy()
-                        initial_points[k][i] = new_x  # update i-th variable
-                    else:
-                        self.result_output.append(f"Run {k+1} failed, keeping old initial point for variable {i+1}")
+                        pt[i] = float(res.x[0])
+                        results.append(res)
 
+                return pt, results
 
-                # calculate the difference between the best cost and the previous cost
-                last_cost = [res.fun for res in results]
-                if cnt == 0 and i == 0:
-                    cost_results.append(last_cost)
-                else:
-                    previous_cost_idx = results.index(min(results, key=lambda r: r.fun))
-                    if results[previous_cost_idx].success:
-                        diff = abs(cost_results[-1][previous_cost_idx] - results[previous_cost_idx].fun)
+            # run all points in parallel
+            parallel_results = self.Parallel_Computation(
+                delayed(optimize_point)(init_pt_x) for init_pt_x in initial_points
+            )
 
-                    cost_results.append(last_cost)
-                    
-            cnt += 1
+            # unpack updated points and results
+            updated_points, all_results = zip(*parallel_results)
+            initial_points = np.array(updated_points)
+
+            
+            flat_results = [r for res_list in all_results for r in res_list if r.success]
+            if flat_results:
+                current_best = min(r.fun for r in flat_results)
+                if cost_results:
+                    diff = abs(cost_results[-1] - current_best)
+                cost_results.append(current_best)
+
+            iter_count += 1
 
 
         t_end = time()
-        best = min(results, key=lambda r: r.fun)
-        selected_idx = results.index(best)
-        best_result = initial_points[selected_idx]
+        min_cost = []
+        for res_idx,res_list in enumerate(all_results):
+            if len(res_list) == 0:
+                min_cost.append(float('inf'))  # no valid results
+                continue
+            min_cost.append(min(r.fun for r in res_list if r.success))
+
+        lowest_idx = np.argmin(min_cost)
+
+        best = min(flat_results, key=lambda r: r.fun)
+        # selected_idx = flat_results.index(best)
+        best_result = initial_points[lowest_idx]
 
         self.result_output.append("\n=== Best Solution ===")
         for i, val in enumerate(best_result):
@@ -477,10 +589,11 @@ class OptimizationApp(QWidget):
         self.result_output.append(f"Minimum cost: {best.fun:.12g}")
         self.result_output.append(f"Total time cost: {t_end - t_start:.4f} seconds")
 
-        best_cost_trace = [x[selected_idx] for x in cost_results]
-        self._plot_cost_trace(best_cost_trace,method="Multi_SCD")
+        # best_cost_trace = [x[selected_idx] for x in cost_results]
+        self._plot_cost_trace(cost_results,method="Multi_SCD")
 
         print(f"Best solution: {best.x}, cost: {best.fun:.6g}, evaluations: {len(best.cost_trace)}")
+
 
 
     def _solve_with_other_inernal_opt(self, n, num_init, bounds, cost_expr, constraint_list,mode):
