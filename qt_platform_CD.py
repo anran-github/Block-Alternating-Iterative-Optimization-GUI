@@ -14,6 +14,8 @@ from sympy.calculus.util import minimum
 from time import time
 import json
 from joblib import Parallel, delayed
+from scipy.stats import qmc  # for LHS
+
 
 # import re
 # import numexpr as ne
@@ -70,7 +72,7 @@ def generate_best_grid_points(bounds, cost_expr, constraint_exprs, S, max_candid
 
 
     valid_points = []
-    while len(valid_points) < S:
+    while len(valid_points) < S//2:
         grids = []
         for i,(low, high) in enumerate(bounds):
             grids.append(np.linspace(low, high, int(step_init[i])).tolist())
@@ -89,6 +91,20 @@ def generate_best_grid_points(bounds, cost_expr, constraint_exprs, S, max_candid
 
 
         step_init = (np.array(step_init) * 1.5 ).tolist()
+
+    # add LHS points
+    while len(valid_points) < S:
+        sampler = qmc.LatinHypercube(d=n)
+        lhs_sample = sampler.random(n=max_candidates)
+        lhs_points = qmc.scale(lhs_sample, [low for (low, high) in bounds], [high for (low, high) in bounds])
+
+        # check feasibility
+        for pt in lhs_points:
+            if all(f(pt) for f in constraint_funcs):
+                cost_val = eval(cost_expr, {}, {"x": pt})
+                valid_points.append((cost_val, pt))
+
+
 
     # # add more feasible points if not enough
     # while len(valid_points) < S:
