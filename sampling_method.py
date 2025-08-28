@@ -13,8 +13,8 @@ def f(x, x0=1.2, depth=5.0, width=0.02):
     """
     x = np.asarray(x)
     well = -depth * np.exp(-((x - x0)**2) / (2*width**2))           # sharp, narrow well
-    ripples = 0.25*np.sin(2.2*x) + 0.15*np.cos(5.3*x)               # local minima/maxima
-    trend = 0.02*(x - x0)**4 + 0.02*x**2                            # keeps it bounded & smooth
+    ripples = 0           # local minima/maxima
+    trend = 0.02*(x - x0)**4 + 0.02*(x - x0)**2                            # keeps it bounded & smooth
     return well + ripples + trend + 10
 
 # Domain
@@ -46,11 +46,11 @@ mc_vals = f(mc_points)
 # -------------------------------
 # Plotting
 # -------------------------------
-plt.figure(figsize=(12, 7))
+# plt.figure(figsize=(12, 7))
 plt.plot(x_vals, y_vals, 'k-', linewidth=2, label="Function f(x)")
 
 # Plot sample points
-plt.scatter(np.concatenate([lhs_points,grid_points]), np.concatenate([lhs_vals,grid_vals]), c='red', marker='o', label="LHS Sampling")
+plt.scatter(np.concatenate([lhs_points,grid_points]), np.concatenate([lhs_vals,grid_vals]), c='red', marker='o', label="Our Hybrid Sampling")
 # plt.scatter(grid_points, grid_vals, c='blue', marker='s', label="Grid Sampling")
 plt.scatter(mc_points, mc_vals, c='green', marker='^', label="Monte Carlo Sampling")
 
@@ -60,5 +60,5 @@ plt.ylabel("f(x)")
 plt.legend()
 plt.grid(True, linestyle="--", alpha=0.6)
 plt.tight_layout()
-plt.savefig("sampling_methods_1D.png", dpi=300)
+# plt.savefig("sampling_methods.png", dpi=300)
 plt.show()

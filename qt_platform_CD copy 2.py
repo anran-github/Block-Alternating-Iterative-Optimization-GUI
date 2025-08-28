@@ -62,13 +62,13 @@ SAFE_ENV = {
 #     for expr in constraint_exprs:
 #         if expr.strip():
 #             transformed = parse_constraint_expression(expr.strip())
-#             constraint_funcs.append(lambda x, e=transformed: eval(e, {"__builtins__": {}}, {**SAFE_ENV, "x": x}) >= 0)
+#             constraint_funcs.append(lambda x, e=transformed: eval(e, {}, {"x": x}) >= 0)
 
 #     valid_points = []
 #     for point in candidates:
 #         # Check constraints
 #         if all(f(point) for f in constraint_funcs):
-#             cost_val = eval(cost_expr, {"__builtins__": {}}, {**SAFE_ENV, "x": point})
+#             cost_val = eval(cost_expr, {}, {"x": point})
 #             valid_points.append((cost_val, point))
     
 #     # Sort by cost and take top S
@@ -94,11 +94,11 @@ def generate_best_grid_points(bounds, cost_expr, constraint_exprs, S, max_candid
         mesh = np.meshgrid(*grids, indexing='ij')
         candidates_uniform = np.vstack([m.flatten() for m in mesh]).T
 
-        constraint_funcs = [lambda x, e=parse_constraint_expression(c): eval(e, {"__builtins__": {}}, {**SAFE_ENV, "x": x}) >= 0 for c in constraint_exprs if c.strip()]
+        constraint_funcs = [lambda x, e=parse_constraint_expression(c): eval(e, {}, {"x": x}) >= 0 for c in constraint_exprs if c.strip()]
         
         for pt in candidates_uniform:
             if all(f(pt) for f in constraint_funcs):
-                cost_val = eval(cost_expr, {"__builtins__": {}}, {**SAFE_ENV, "x": pt})
+                cost_val = eval(cost_expr, {}, {"x": pt})
                 valid_points.append((cost_val, pt))
 
 
@@ -113,7 +113,7 @@ def generate_best_grid_points(bounds, cost_expr, constraint_exprs, S, max_candid
         # check feasibility
         for pt in lhs_points:
             if all(f(pt) for f in constraint_funcs):
-                cost_val = eval(cost_expr, {"__builtins__": {}}, {**SAFE_ENV, "x": pt})
+                cost_val = eval(cost_expr, {}, {"x": pt})
                 valid_points.append((cost_val, pt))
 
 
@@ -128,7 +128,7 @@ def generate_best_grid_points(bounds, cost_expr, constraint_exprs, S, max_candid
         
     #     for pt in candidates:
     #         if all(f(pt) for f in constraint_funcs):
-    #             cost_val = eval(cost_expr, {"__builtins__": {}}, {**SAFE_ENV, "x": pt})
+    #             cost_val = eval(cost_expr, {}, {"x": pt})
     #             valid_points.append((cost_val, pt))
                 
     valid_points.sort(key=lambda t: t[0])
@@ -210,7 +210,7 @@ def solve_from_initial_point(x0, cost_expr, constraint_exprs, bounds, mode="SLSQ
     cost_values = []
 
     def cost_fn(x):
-        val = eval(cost_expr, {"__builtins__": {}}, {**SAFE_ENV, "x": x})
+        val = eval(cost_expr, {}, {"x": x})
         cost_values.append(float(val))
         return float(val)
 
@@ -222,7 +222,7 @@ def solve_from_initial_point(x0, cost_expr, constraint_exprs, bounds, mode="SLSQ
         transformed = parse_constraint_expression(s)
 
         def make_fun(trans_expr):
-            return lambda x: float(eval(trans_expr, {"__builtins__": {}}, {**SAFE_ENV, "x": x}))
+            return lambda x: float(eval(trans_expr, {}, {"x": x}))
 
         cons.append({"type": "ineq", "fun": make_fun(transformed)})
 
@@ -671,8 +671,8 @@ class OptimizationApp(QWidget):
 
         # Helper: evaluate fitness with constraints
         def evaluate(ind):
-            if all(eval(parse_constraint_expression(c), {"__builtins__": {}}, {**SAFE_ENV, "x": ind}) >= 0 for c in constraint_list):
-                return eval(cost_expr, {"__builtins__": {}}, {**SAFE_ENV, "x": ind})
+            if all(eval(parse_constraint_expression(c), {}, {"x": ind}) >= 0 for c in constraint_list):
+                return eval(cost_expr, {}, {"x": ind})
             else:
                 return 1e10  # penalize infeasible
 
@@ -746,9 +746,9 @@ class OptimizationApp(QWidget):
 
         # Helper to evaluate cost with constraint penalty
         def evaluate(x):
-            feasible = all(eval(parse_constraint_expression(c), {"__builtins__": {}}, {**SAFE_ENV, "x": x}) >= 0 for c in constraint_list)
+            feasible = all(eval(parse_constraint_expression(c), {}, {"x": x}) >= 0 for c in constraint_list)
             if feasible:
-                return eval(cost_expr, {"__builtins__": {}}, {**SAFE_ENV, "x": x})
+                return eval(cost_expr, {}, {"x": x})
             else:
                 return 1e10  # penalize infeasible
 
