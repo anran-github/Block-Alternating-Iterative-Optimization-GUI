@@ -721,6 +721,12 @@ class OptimizationApp(QWidget):
                     k = np.random.randint(n)
                     ind[k] = np.random.uniform(bounds[k][0], bounds[k][1])
 
+
+            # 6. Elitism (keep best solution from previous generation)
+            worst_idx = np.argmax([evaluate(ind) for ind in offspring])
+            offspring[worst_idx] = best_individual.copy()
+
+            
             population = offspring
 
         # Final results

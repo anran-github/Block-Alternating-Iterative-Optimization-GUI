@@ -19,8 +19,8 @@ def plot_savedfile(filename):
     plt.grid(linestyle='--', alpha=0.7)
     plt.legend()
     plt.tight_layout()
-    # plt.savefig('cost_plot.png')
+    plt.savefig('cost_plot.png')
     plt.show()
 
 
-plot_savedfile('Multi_SCD_results.json')
+plot_savedfile('Multi_SCD_results_paper.json')
