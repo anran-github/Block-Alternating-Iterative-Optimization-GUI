@@ -2,6 +2,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.stats import qmc  # for LHS
 
+plt.rcParams['font.family'] = 'Times New Roman'
+
 # -------------------------------
 # Define nonlinear bounded 2D function
 # -------------------------------
@@ -47,13 +49,13 @@ cs = plt.contourf(XX, YY, ZZ, levels=40, cmap="viridis")
 
 # Plot both sampling methods
 plt.scatter(lhs_points[:, 0], lhs_points[:, 1], 
-            c="red", edgecolor="k", s=40, label="LHS Sampling")
+            c="red", edgecolor="k", s=40, label="LHS")
 plt.scatter(grid_points[:, 0], grid_points[:, 1], 
             c="blue", edgecolor="k", s=40, label="Grid Sampling")
 
-plt.title("Combined Sampling Method on 2D Function")
-plt.xlabel("x1")
-plt.ylabel("x2")
+plt.title("Color Map Representation of $f(x_1,x_2)$ Over the Input Domain")
+plt.xlabel("$x_1$",fontsize=12)
+plt.ylabel("$x_2$",fontsize=12)
 plt.legend(loc="upper right")
 plt.colorbar(cs, shrink=0.8)
 plt.tight_layout()
