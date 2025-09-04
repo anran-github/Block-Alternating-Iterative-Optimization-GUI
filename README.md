@@ -38,7 +38,7 @@ Once you have installed the required packages and started the GUI, you will see 
 - **Optimization Construction**: Write your own constrained non-convex optimization problem.
 - **Adjust Parameters**: Modify the number of initial points.
 - **Run Algorithm**: Select the algorithms shown in our paper, and observe the solution and iteration changes.
-- **Export Plots**: 
+- **Export Plots**: Export algorithm iteration plot for your research.
 
 ### Tips:
 - Use Python syntax to build your optimization problem. For example, **exp(x), x\**2, sqrt(x),log(x)**.
