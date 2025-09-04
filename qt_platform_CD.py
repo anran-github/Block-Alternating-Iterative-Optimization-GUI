@@ -238,7 +238,7 @@ def solve_from_initial_point(x0, cost_expr, constraint_exprs, bounds, mode="SLSQ
 class OptimizationApp(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Nonlinear Constrained Optimization Platform")
+        self.setWindowTitle("Constrained Optimization Platform")
         self.setGeometry(100, 100, 900, 720)
 
         top_row = QHBoxLayout()
@@ -536,6 +536,7 @@ class OptimizationApp(QWidget):
         initial_points = generate_best_grid_points(bounds, cost_expr, constraint_list, S)
 
         cost_results = []
+        all_results_buffer = []
         diff = tol + 1
         iter_count = 0
 
@@ -588,8 +589,13 @@ class OptimizationApp(QWidget):
 
             
             flat_results = [r for res_list in all_results for r in res_list if r.success]
+            
+            all_results_buffer.append(all_results)
+
+
             if flat_results:
-                current_best = min(r.fun for r in flat_results)
+                best_index = np.argmin([r.fun for r in flat_results])
+                current_best = flat_results[best_index].fun
                 if cost_results:
                     diff = abs(cost_results[-1] - current_best)
                 cost_results.append(current_best)
@@ -603,6 +609,7 @@ class OptimizationApp(QWidget):
             if len(res_list) == 0:
                 min_cost.append(float('inf'))  # no valid results
                 continue
+            # select the min cost from each initial point's results
             min_cost.append(min(r.fun for r in res_list if r.success))
 
         lowest_idx = np.argmin(min_cost)
@@ -618,7 +625,12 @@ class OptimizationApp(QWidget):
         self.result_output.append(f"Total time cost: {t_end - t_start:.4f} seconds")
 
         # best_cost_trace = [x[selected_idx] for x in cost_results]
-        self._plot_cost_trace(cost_results,method="Multi_SCD")
+        cost_results_plot = []
+        for init_pt_x in all_results_buffer:
+            if len(init_pt_x) == len(initial_points):
+                cost_results_plot.extend([x.fun for x in init_pt_x[lowest_idx]])
+        
+        self._plot_cost_trace(cost_results_plot,method="Multi_SCD")
 
         print(f"Best solution: {best.x}, cost: {best.fun:.6g}, evaluations: {len(best.cost_trace)}")
 
