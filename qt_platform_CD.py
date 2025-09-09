@@ -286,7 +286,7 @@ class OptimizationApp(QWidget):
         solve_mode = QHBoxLayout()
         solve_mode.addWidget(QLabel("Select Optimization Algorithm:"))
         self.algo_selector = QComboBox()
-        self.algo_selector.addItems(["Block-Alternating Iter", "SLSQP", "COBYLA","trust-constr", "GA", "Particle Swarm"])
+        self.algo_selector.addItems(["Block-Alternating Iter", "GA", "Particle Swarm"])
         solve_mode.addWidget(self.algo_selector)
 
         self.solve_button = QPushButton("Solve (parallel)")
@@ -635,31 +635,6 @@ class OptimizationApp(QWidget):
         print(f"Best solution: {best.x}, cost: {best.fun:.6g}, evaluations: {len(best.cost_trace)}")
 
 
-
-    def _solve_with_other_inernal_opt(self, n, num_init, bounds, cost_expr, constraint_list,mode):
-        self.result_output.clear()
-        self.result_output.append(f"Running {mode} Optimization...\n")
-
-        t_start = time()
-        # generate initial points (just take first point from grid for simplicity)
-        initial_points = generate_best_grid_points(bounds, cost_expr, constraint_list, 1)
-
-        x0 = initial_points[0]
-
-        res = solve_from_initial_point(x0, cost_expr, constraint_list, bounds,mode)
-        t_end = time()
-        
-        if res.success:
-            self.result_output.append(f"\n=== Best Solution ({mode}) ===")
-            for i, val in enumerate(res.x):
-                self.result_output.append(f"x{i+1} = {float(val):.8g}")
-            self.result_output.append(f"Minimum cost: {res.fun:.12g}")
-            self.result_output.append(f"Total time cost: {t_end - t_start:.4f} seconds")
-            self._plot_cost_trace(res.cost_trace,method=mode)
-        else:
-            self.result_output.append(f"Optimization failed: {res.message}")
-
-
     def _solve_with_GA(self, n, num_init, bounds, cost_expr, constraint_list,
                     generations=200, crossover_rate=0.8, mutation_rate=0.2):
         """
@@ -868,10 +843,7 @@ class OptimizationApp(QWidget):
 
             # select optimization algorithm
             algo = self.algo_selector.currentText()
-            if algo == "SLSQP" or algo == "COBYLA" or algo == "trust-constr":
-                # use SLSQP or COBYLA or trust-constr
-                self._solve_with_other_inernal_opt(n, num_init, bounds, cost_expr, constraint_list,algo)
-            elif algo == "Block-Alternating Iter":
+            if algo == "Block-Alternating Iter":
                 self._solve_with_Multi_SCD(n, num_init, bounds, cost_expr, constraint_list)
             elif algo == "GA":
                 self._solve_with_GA(n, num_init, bounds, cost_expr, constraint_list)
