@@ -227,7 +227,7 @@ def solve_from_initial_point(x0, cost_expr, constraint_exprs, bounds, mode="SLSQ
         cons.append({"type": "ineq", "fun": make_fun(transformed)})
 
     if mode == "Block-Alternating Iter":
-        result = minimize(cost_fn, x0, method='SLSQP', bounds=bounds, constraints=cons,options={'maxiter': 5})
+        result = minimize(cost_fn, x0, method='SLSQP', bounds=bounds, constraints=cons,options={'maxiter': 10})
     else:
         result = minimize(cost_fn, x0, method=mode, bounds=bounds, constraints=cons) #, options={'disp': True, 'maxiter': 1000})
 
@@ -249,6 +249,17 @@ class OptimizationApp(QWidget):
         top_row.addWidget(QLabel("Number of initial points:"))
         self.num_init_input = QLineEdit("8")
         top_row.addWidget(self.num_init_input)
+
+
+        # Add field for manual initial point
+        self.init_point_input = QLineEdit()
+        self.init_point_input.setPlaceholderText("Enter initial point, e.g. 1,2,3")
+        self.init_point_input.setEnabled(False)  # disabled by default
+        top_row.addWidget(QLabel("Custom Initial Point:"))
+        top_row.addWidget(self.init_point_input)
+
+        # Connect num_init change to toggle
+        self.num_init_input.textChanged.connect(self._toggle_init_point_input)
 
         self.bounds_input = QTextEdit()
         # self.bounds_input.setPlaceholderText(
@@ -335,6 +346,27 @@ class OptimizationApp(QWidget):
         self.executor = ProcessPoolExecutor()
         self.Parallel_Computation = Parallel(n_jobs=-1)
 
+
+    def _toggle_init_point_input(self):
+        """Enable manual input only when num_init == 1"""
+        try:
+            num_init = int(self.num_init_input.text())
+            self.init_point_input.setEnabled(num_init == 1)
+        except ValueError:
+            self.init_point_input.setEnabled(False)
+
+    def _parse_initial_points(self, bounds, cost_expr, constraint_list, S):
+        """Return user-defined or generated initial points"""
+        if S == 1 and self.init_point_input.isEnabled():
+            text = self.init_point_input.text().strip()
+            if text:
+                try:
+                    pt = [float(v) for v in text.split(",")]
+                    return [np.array(pt)]  # return as list of points
+                except Exception:
+                    QMessageBox.warning(self, "Invalid Input", "Initial point format must be comma-separated numbers.")
+        # fallback: auto-generate
+        return generate_best_grid_points(bounds, cost_expr, constraint_list, S)
 
     def _parse_bounds(self, n):
         default_bound = (-1e6, 1e6)
@@ -533,7 +565,8 @@ class OptimizationApp(QWidget):
 
         # Latin Hypercube initial points
         t_start = time()
-        initial_points = generate_best_grid_points(bounds, cost_expr, constraint_list, S)
+        initial_points = self._parse_initial_points(bounds, cost_expr, constraint_list, S)
+        # initial_points = generate_best_grid_points(bounds, cost_expr, constraint_list, S)
 
         cost_results = []
         all_results_buffer = []
@@ -555,9 +588,9 @@ class OptimizationApp(QWidget):
                     # substitute fixed variables
                     for j in range(n):
                         if j != i:
-                            cost_expr_c_tmp = cost_expr_c_tmp.replace(f"x[{j}]", str(pt[j]))
+                            cost_expr_c_tmp = cost_expr_c_tmp.replace(f"x[{j}]", '('+str(pt[j])+')')
                             constraint_list_c_tmp = [
-                                c.replace(f"x{j+1}", str(pt[j])) for c in constraint_list_c_tmp
+                                c.replace(f"x{j+1}", '('+str(pt[j])+')') for c in constraint_list_c_tmp
                             ]
 
                     # rename the active variable to x[0]
