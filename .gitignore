@@ -1,4 +1,8 @@
-heater_experiments
 qt_platform_CD_Full_Solvers.py
 *.json
 qt_platform_CD_no_init1.py
+heater_experiments/weights
+heater_experiments/dataset
+heater_experiments/__pycache__
+heater_experiments/*.asv
+Heater_Model_Results/*.txt
